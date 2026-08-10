@@ -1,0 +1,10 @@
+[project]
+name = "modal-ephemeral-sandbox-receipt"
+version = "0.0.1"
+description = "Scaffold: Ephemeral Sandbox Receipt (independent Modal lens)"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

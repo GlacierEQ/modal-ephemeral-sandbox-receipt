@@ -1,0 +1,22 @@
+{
+  "schema": "glaciereq.repo-target-contract.v1",
+  "identity": {
+    "repository_id": "GlacierEQ/modal-ephemeral-sandbox-receipt",
+    "family": "elite-estate"
+  },
+  "current": {
+    "state": "PROMOTED",
+    "implemented": true,
+    "tested": true,
+    "deployed": false
+  },
+  "nonclaims": [
+    "no employer affiliation",
+    "no production deployment without receipt"
+  ],
+  "donor_plan": {
+    "mode": "none",
+    "donors": []
+  },
+  "frozen_at": "2026-08-10T10:11Z"
+}

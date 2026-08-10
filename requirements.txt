@@ -1,0 +1,2 @@
+# stdlib-first scaffold — add pins only when implementation needs them
+pytest>=8.0

@@ -1,0 +1,182 @@
+{
+  "schema": "glaciereq.repo-excellence-state.v1",
+  "repository": "GlacierEQ/modal-ephemeral-sandbox-receipt",
+  "principal_state": "PROMOTED",
+  "gates": {
+    "IDENTITY_RESOLVED": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "github GlacierEQ/modal-ephemeral-sandbox-receipt"
+    },
+    "PROBLEM_VERIFIED": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "README/ISSUE_CONTRACT problem bound"
+    },
+    "TARGET_CONTRACT_FROZEN": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "machine/target-contract.json"
+    },
+    "DONOR_PLAN_RESOLVED": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "elite bar seed; donor_reuse=none"
+    },
+    "VERTICAL_SLICE_ALIVE": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "src mechanism + scripts/operate.py"
+    },
+    "CENTRAL_MECHANISM_PRESENT": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "central mechanism in src/"
+    },
+    "DETERMINISTIC_PROOF_GREEN": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "dual-run green tests"
+    },
+    "ADVERSARIAL_SURVIVAL": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "tests/test_adversarial.py"
+    },
+    "OPERABLE_AND_OBSERVABLE": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "scripts/operate.py dual-run PASS; primary ok"
+    },
+    "PROOF_RECEIPT_BOUND": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "proof_receipt digest=2092d8201979a912\u2026 entry=unittest"
+    },
+    "AUTHORITY_BOUND": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "promotion_authority.json local HMAC grant"
+    },
+    "PROJECTION_TRUTH_CLOSED": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "operable=scripts/operate.py dual-run PASS; primary ok; proof=proof_receipt digest=2092d8201979a912\u2026 entry=unittest; authority=promotion_authority.json local HMAC grant; claim_ceiling=leaf-native; projection_role=monolith_projection_only"
+    },
+    "CANONICAL_POSITION_RESOLVED": {
+      "status": "PENDING"
+    },
+    "EVOLUTION_CURSOR_DEFINED": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "elite estate elevator"
+    }
+  },
+  "history": [
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "DISCOVERED",
+      "to": "IDENTITY_RESOLVED",
+      "gate": "IDENTITY_RESOLVED",
+      "result": "PASS",
+      "note": "github GlacierEQ/modal-ephemeral-sandbox-receipt"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "IDENTITY_RESOLVED",
+      "to": "PROBLEM_VERIFIED",
+      "gate": "PROBLEM_VERIFIED",
+      "result": "PASS",
+      "note": "README/ISSUE_CONTRACT problem bound"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "PROBLEM_VERIFIED",
+      "to": "TARGET_CONTRACTED",
+      "gate": "TARGET_CONTRACT_FROZEN",
+      "result": "PASS",
+      "note": "machine/target-contract.json"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "TARGET_CONTRACTED",
+      "to": "SEEDED",
+      "gate": "DONOR_PLAN_RESOLVED",
+      "result": "PASS",
+      "note": "elite bar seed; donor_reuse=none"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "SEEDED",
+      "to": "VERTICAL_SLICE",
+      "gate": "VERTICAL_SLICE_ALIVE",
+      "result": "PASS",
+      "note": "src mechanism + scripts/operate.py"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "VERTICAL_SLICE",
+      "to": "IMPLEMENTED",
+      "gate": "CENTRAL_MECHANISM_PRESENT",
+      "result": "PASS",
+      "note": "central mechanism in src/"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "IMPLEMENTED",
+      "to": "TESTED",
+      "gate": "DETERMINISTIC_PROOF_GREEN",
+      "result": "PASS",
+      "note": "dual-run green tests"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "TESTED",
+      "to": "ADVERSARIAL_VERIFIED",
+      "gate": "ADVERSARIAL_SURVIVAL",
+      "result": "PASS",
+      "note": "tests/test_adversarial.py"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "ADVERSARIAL_VERIFIED",
+      "to": "OPERABLE",
+      "gate": "OPERABLE_AND_OBSERVABLE",
+      "result": "PASS",
+      "note": "scripts/operate.py dual-run PASS; primary ok"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "OPERABLE",
+      "to": "PROOF_REPRODUCED",
+      "gate": "PROOF_RECEIPT_BOUND",
+      "result": "PASS",
+      "note": "proof_receipt digest=2092d8201979a912\u2026 entry=unittest"
+    },
+    {
+      "at": "2026-08-10T10:11Z",
+      "from": "PROOF_REPRODUCED",
+      "to": "PROMOTED",
+      "gate": "AUTHORITY_BOUND",
+      "result": "PASS",
+      "note": "promotion_authority.json local HMAC grant"
+    }
+  ],
+  "contract_ref": "machine/target-contract.json",
+  "scores_ref": "machine/excellence-scores.json",
+  "evolution_cursor": "next:canonical_position_only_if_estate_role_resolved",
+  "wave": {
+    "id": "WAVE-C-2026-08-10",
+    "label": "Wave C \u2014 Innovation scaffold excellence group",
+    "group": "C",
+    "phase": "PROMOTED",
+    "enrolled_at": "2026-08-10T1002Z",
+    "promoted_at": "2026-08-10T1011Z",
+    "policy": "glaciereq.repo-excellence.promotion-policy.v1",
+    "proof_ok": true,
+    "operable_ok": true,
+    "projection_truth_closed_at": "2026-08-10T1011Z"
+  },
+  "excellence_group": "C",
+  "scaffold": false
+}

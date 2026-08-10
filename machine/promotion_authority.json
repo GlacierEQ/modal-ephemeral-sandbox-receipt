@@ -1,0 +1,11 @@
+{
+  "schema": "glaciereq.promotion-authority-grant.v1",
+  "repository": "GlacierEQ/modal-ephemeral-sandbox-receipt",
+  "source_sha": "19b640c0ccdef9b1421041c5d3bb26a26cbfb9d05e1adbb0605800ac2a83e44e",
+  "proof_receipt_digest": "2092d8201979a91265541c0f1290cc37572ac3ffa7794e5646f72b81036fbacc",
+  "not_after": 1788948674.5705411,
+  "mac": "61a3d857458545074df5ec98a9ff36e01add40ef7ab4f82a121a16e70e4f855d",
+  "issuer": "local_operator_promotion_authority",
+  "verified": true,
+  "secret_ref": "src/promotion_authority.py::LOCAL_OPERATOR_SECRET"
+}

@@ -1,0 +1,20 @@
+{
+  "schema": "glaciereq.repo-excellence-scores.v1",
+  "repository": "GlacierEQ/modal-ephemeral-sandbox-receipt",
+  "never_collapse": true,
+  "axes": {
+    "target_architecture": {
+      "grade": "B"
+    },
+    "current_proof": {
+      "grade": "A"
+    },
+    "company_fit": {
+      "score": 0.0
+    },
+    "canonical_confidence": {
+      "score": 0.0,
+      "role": "PROMOTED_LEAF"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schema": "glaciereq.operability-receipt.v1",
+  "repository": "GlacierEQ/modal-ephemeral-sandbox-receipt",
+  "at": "2026-08-10T10:11Z",
+  "source_sha": "19b640c0ccdef9b1421041c5d3bb26a26cbfb9d05e1adbb0605800ac2a83e44e",
+  "entry": "scripts/operate.py",
+  "primary_output": {
+    "module": "ephemeral_sandbox_receipt",
+    "ok": true,
+    "repository": "GlacierEQ/modal-ephemeral-sandbox-receipt",
+    "smoke": {
+      "args": [
+        "EphemeralSandboxReceiptRequest(subject_i"
+      ],
+      "content_checked": true,
+      "invoked": true,
+      "kind": "class",
+      "method": "evaluate",
+      "module_local": true,
+      "name": "EphemeralSandboxReceipt",
+      "result": "EphemeralSandboxReceiptReceipt(decision=<Decision.ALLOW: 'ALLOW'>, reasons=('scaffold_allow',), digest='de5a200a89430d2dec7318cf5aea51ee466c45d752e842d6d852e6bed15c045c', metrics={'scaffold': True, 'payload_keys': [], 'budget': 1.0})"
+    }
+  },
+  "dual_run_ok": true,
+  "result": "PASS"
+}

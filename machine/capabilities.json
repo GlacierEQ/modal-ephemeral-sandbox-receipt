@@ -1,0 +1,12 @@
+{
+  "schema": "glaciereq.repo-capabilities.v1",
+  "repository": "GlacierEQ/modal-ephemeral-sandbox-receipt",
+  "capabilities": [
+    {
+      "id": "ephemeral-sandbox-receipt",
+      "name": "Ephemeral Sandbox Receipt",
+      "status": "SCAFFOLD",
+      "module": "src/ephemeral_sandbox_receipt.py"
+    }
+  ]
+}

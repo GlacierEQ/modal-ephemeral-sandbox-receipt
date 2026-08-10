@@ -1,0 +1,31 @@
+{
+  "schema": "glaciereq.proof-receipt.v1",
+  "repository": "GlacierEQ/modal-ephemeral-sandbox-receipt",
+  "source_sha": "19b640c0ccdef9b1421041c5d3bb26a26cbfb9d05e1adbb0605800ac2a83e44e",
+  "proof_id": "elite-modal-ephemeral-sandbox-receipt-1786356674",
+  "environment": {
+    "python": "/Users/kcbflux/.local/bin/python3.11",
+    "PYTHONPATH": "/Users/kcbflux/GlacierEQ_Swarm/job-app/repos/modal-ephemeral-sandbox-receipt:/Users/kcbflux/GlacierEQ_Swarm/job-app/repos/modal-ephemeral-sandbox-receipt/src",
+    "entry": "unittest"
+  },
+  "tests": [
+    "/Users/kcbflux/.local/bin/python3.11 -m unittest discover -s tests -v (x2)"
+  ],
+  "adversarial_tests": [
+    "tests/test_adversarial.py"
+  ],
+  "runtime": {
+    "operate": "scripts/operate.py (x2)",
+    "dual_run_ok": true,
+    "proof_dual_run_ok": true
+  },
+  "result": "PASS",
+  "limitations": [
+    "not production deployed",
+    "reference implementation only"
+  ],
+  "timestamp": "2026-08-10T10:11Z",
+  "artifact_hashes": {
+    "operability_receipt": "53f5fac2db0c60ec3688b8d222ab498bdbf0964930a2f1f8311dda3dfb25c64f"
+  }
+}
