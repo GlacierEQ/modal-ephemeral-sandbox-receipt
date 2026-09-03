@@ -1,0 +1,1 @@
+Protected-namespace negative dogfood fixture. Branch should remain after merge.
