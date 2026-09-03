@@ -12,4 +12,6 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: python -m pytest -q
+      - name: Prove Mega Skills Branch Lifecycle Intelligence
+        run: python proof/branch-lifecycle/tests/test_branch_lifecycle.py -v
       - run: python scripts/operate.py
