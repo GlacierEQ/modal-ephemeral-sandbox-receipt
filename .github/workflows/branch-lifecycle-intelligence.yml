@@ -354,6 +354,48 @@ jobs:
               return Math.max(0, Math.floor((generatedAt - when) / 86400000));
             }
 
+            function dynamicAssessment(state, action, evidence) {
+              const errors = evidence.evidence_errors || [];
+              const evidenceQuality = errors.length
+                ? "INCOMPLETE"
+                : (evidence.protected || evidence.open_pr_count > 0 || Number.isInteger(evidence.ahead_by))
+                  ? "STRONG"
+                  : "PARTIAL";
+
+              let valueSignal = "UNKNOWN";
+              let recommendedEffect = "BLOCK_UNCERTAIN";
+              if (["ACTIVE", "DIVERGENT_PRESERVE"].includes(state)) {
+                valueSignal = "HIGH";
+                recommendedEffect = "PRESERVE_AND_HARVEST";
+              } else if (state === "STALE_REVIEW") {
+                valueSignal = "POTENTIAL";
+                recommendedEffect = "CONSOLIDATE_AFTER_HARVEST";
+              } else if (state === "PROTECTED") {
+                valueSignal = "POLICY_RESERVED";
+                recommendedEffect = "DENY_REMOVAL";
+              } else if (["MERGED_REDUNDANT", "REACHABLE_REDUNDANT"].includes(state)) {
+                valueSignal = "REDUNDANT";
+                recommendedEffect = "REMOVE_REDUNDANT";
+              }
+
+              const riskSignal = evidence.protected || evidence.open_pr_count > 0 || errors.length
+                ? "HIGH"
+                : ["DIVERGENT_PRESERVE", "STALE_REVIEW"].includes(state)
+                  ? "MEDIUM"
+                  : "LOW";
+
+              return {
+                evidence_quality: evidenceQuality,
+                value_signal: valueSignal,
+                risk_signal: riskSignal,
+                recommended_effect: recommendedEffect,
+                unique_commit_count: Number.isInteger(evidence.ahead_by) ? evidence.ahead_by : null,
+                changed_file_count: Number.isInteger(evidence.changed_file_count) ? evidence.changed_file_count : null,
+                reassess_before_mutation: action === "DELETE",
+                static_label_authoritative: false,
+              };
+            }
+
             function classify(branch) {
               const isProtected =
                 branch.name === defaultBranch ||
@@ -371,6 +413,7 @@ jobs:
                 behind_by: branch.behind_by,
                 compare_status: branch.compare_status,
                 age_days: age,
+                changed_file_count: branch.changed_files.length,
                 evidence_errors: branch.evidence_errors,
               };
               const result = (state, action, confidence, reason) => ({
@@ -382,6 +425,7 @@ jobs:
                 cleanup_confidence: confidence,
                 reason,
                 evidence,
+                dynamic_assessment: dynamicAssessment(state, action, evidence),
               });
 
               if (isProtected) return result("PROTECTED", "KEEP", 0, "reserved or protected branch");
@@ -481,6 +525,9 @@ jobs:
               repository: fullName,
               default_branch: defaultBranch,
               generated_at: generatedAt.toISOString(),
+              assessment_ttl_seconds: 300,
+              assessment_valid_until: new Date(generatedAt.getTime() + 300000).toISOString(),
+              dynamic_assessment_required: true,
               mode,
               scope,
               native_delete_branch_on_merge: Boolean(repoMeta.data.delete_branch_on_merge),
@@ -505,6 +552,7 @@ jobs:
             const deleted = [];
             const executionBlocked = [];
             const executionErrors = [];
+            const reassessments = [];
             const rolledBack = [];
             const rollbackFailures = [];
             const deleteCandidates = decisions
@@ -565,74 +613,130 @@ jobs:
               }
             }
 
+            async function reassessForMutation(item) {
+              let live;
+              try {
+                live = await github.rest.repos.getBranch({ owner, repo, branch: item.branch });
+              } catch (error) {
+                if (error.status === 404) {
+                  return { state: "ABSENT", action: "RESOLVED", confidence: 100, reason: "branch already absent", live_sha: null };
+                }
+                throw error;
+              }
+
+              if (live.data.commit.sha !== item.sha) {
+                return {
+                  state: "UNKNOWN_BLOCKED",
+                  action: "BLOCK",
+                  confidence: 0,
+                  reason: "head changed since assessment; previous decision expired",
+                  live_sha: live.data.commit.sha,
+                };
+              }
+              if (live.data.name === defaultBranch || live.data.protected || protectedByPattern(live.data.name)) {
+                return { state: "PROTECTED", action: "KEEP", confidence: 0, reason: "branch is currently protected", live_sha: live.data.commit.sha };
+              }
+
+              const openNow = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: "open",
+                head: `${owner}:${item.branch}`,
+                per_page: 10,
+              });
+              if (openNow.data.length) {
+                return { state: "ACTIVE", action: "KEEP", confidence: 0, reason: "open pull request exists now", live_sha: live.data.commit.sha };
+              }
+
+              const closedNow = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: "closed",
+                head: `${owner}:${item.branch}`,
+                per_page: 100,
+              });
+              const mergedCurrentHead = closedNow.data.find(pr => Boolean(pr.merged_at) && pr.head?.sha === live.data.commit.sha);
+              if (mergedCurrentHead) {
+                return {
+                  state: "MERGED_REDUNDANT",
+                  action: "DELETE",
+                  confidence: 100,
+                  reason: "fresh merged-PR evidence matches current head",
+                  live_sha: live.data.commit.sha,
+                  merged_pr: mergedCurrentHead.number,
+                };
+              }
+
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner,
+                repo,
+                basehead: `${defaultBranch}...${item.branch}`,
+                per_page: 1,
+              });
+              if (comparison.data.ahead_by === 0) {
+                return {
+                  state: "REACHABLE_REDUNDANT",
+                  action: "DELETE",
+                  confidence: 98,
+                  reason: "fresh comparison shows zero unique commits",
+                  live_sha: live.data.commit.sha,
+                  ahead_by: 0,
+                };
+              }
+              if (Number.isInteger(comparison.data.ahead_by) && comparison.data.ahead_by > 0) {
+                return {
+                  state: "DIVERGENT_PRESERVE",
+                  action: "KEEP",
+                  confidence: 0,
+                  reason: "fresh comparison found unique commits",
+                  live_sha: live.data.commit.sha,
+                  ahead_by: comparison.data.ahead_by,
+                };
+              }
+              return {
+                state: "UNKNOWN_BLOCKED",
+                action: "BLOCK",
+                confidence: 0,
+                reason: "fresh evidence is insufficient",
+                live_sha: live.data.commit.sha,
+              };
+            }
+
             if (mode === "apply") {
               for (const item of executeCandidates) {
                 let deleteAttempted = false;
                 try {
-                  let live;
-                  try {
-                    live = await github.rest.repos.getBranch({ owner, repo, branch: item.branch });
-                  } catch (error) {
-                    if (error.status === 404) {
-                      deleted.push({
-                        branch: item.branch,
-                        sha: item.sha,
-                        state: item.state,
-                        confidence: item.cleanup_confidence,
-                        already_absent: true,
-                      });
-                      continue;
-                    }
-                    throw error;
-                  }
-
-                  if (live.data.name === defaultBranch || live.data.protected || protectedByPattern(live.data.name)) {
-                    executionBlocked.push({ branch: item.branch, reason: "became_protected" });
-                    continue;
-                  }
-                  if (live.data.commit.sha !== item.sha) {
-                    executionBlocked.push({ branch: item.branch, reason: "head_changed_since_inventory" });
-                    continue;
-                  }
-
-                  const openNow = await github.rest.pulls.list({
-                    owner,
-                    repo,
-                    state: "open",
-                    head: `${owner}:${item.branch}`,
-                    per_page: 10,
+                  const fresh = await reassessForMutation(item);
+                  reassessments.push({
+                    branch: item.branch,
+                    assessed_at: new Date().toISOString(),
+                    prior_state: item.state,
+                    prior_action: item.action,
+                    fresh_state: fresh.state,
+                    fresh_action: fresh.action,
+                    fresh_confidence: fresh.confidence,
+                    reason: fresh.reason,
+                    head_stable: fresh.live_sha === item.sha || fresh.live_sha === null,
                   });
-                  if (openNow.data.length) {
-                    executionBlocked.push({ branch: item.branch, reason: "open_pr_present_at_execution" });
+
+                  if (fresh.state === "ABSENT") {
+                    deleted.push({
+                      branch: item.branch,
+                      sha: item.sha,
+                      state: item.state,
+                      confidence: item.cleanup_confidence,
+                      already_absent: true,
+                    });
                     continue;
                   }
-
-                  if (item.state === "MERGED_REDUNDANT") {
-                    const mergedPr = (pullsByBranch.get(item.branch) || []).find(
-                      pr => Boolean(pr.merged_at) && pr.head?.sha === item.sha
-                    );
-                    if (!mergedPr) {
-                      executionBlocked.push({ branch: item.branch, reason: "merged_pr_evidence_missing_at_execution" });
-                      continue;
-                    }
-                    const livePr = await github.rest.pulls.get({ owner, repo, pull_number: mergedPr.number });
-                    if (!livePr.data.merged_at || livePr.data.head?.sha !== item.sha) {
-                      executionBlocked.push({ branch: item.branch, reason: "merged_pr_current_head_no_longer_verified" });
-                      continue;
-                    }
-                  } else if (item.state === "REACHABLE_REDUNDANT") {
-                    const comparison = await github.rest.repos.compareCommitsWithBasehead({
-                      owner,
-                      repo,
-                      basehead: `${defaultBranch}...${item.branch}`,
-                      per_page: 1,
+                  if (fresh.action !== "DELETE" || fresh.confidence < minimumDeleteConfidence) {
+                    executionBlocked.push({
+                      branch: item.branch,
+                      reason: "dynamic_reassessment_denied_mutation",
+                      prior_state: item.state,
+                      fresh_state: fresh.state,
+                      fresh_reason: fresh.reason,
                     });
-                    if (comparison.data.ahead_by !== 0) {
-                      executionBlocked.push({ branch: item.branch, reason: "branch_became_divergent" });
-                      continue;
-                    }
-                  } else {
-                    executionBlocked.push({ branch: item.branch, reason: "state_not_auto_deleteable" });
                     continue;
                   }
 
@@ -716,6 +820,7 @@ jobs:
               blocked: decisions.filter(row => row.action === "BLOCK").map(row => ({ branch: row.branch, state: row.state, reason: row.reason })),
               execution_blocked: executionBlocked,
               execution_errors: executionErrors,
+              dynamic_reassessments: reassessments,
               rolled_back: rolledBack,
               rollback_failures: rollbackFailures,
               classifications: classificationCounts,
@@ -756,6 +861,7 @@ jobs:
                 ["Deferred by delete budget", String(deferredDeleteCandidates.length)],
                 ["Preserved divergent/active", String(receipt.preserved_divergent.length)],
                 ["Blocked", String(receipt.blocked.length + executionBlocked.length)],
+                ["Dynamic reassessments", String(reassessments.length)],
                 ["Rolled back", String(rolledBack.length)],
                 ["Rollback failures", String(rollbackFailures.length)],
                 ["Consolidation families", String(receipt.consolidation_families.length)],
