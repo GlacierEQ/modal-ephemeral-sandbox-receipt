@@ -1,0 +1,785 @@
+name: Branch Lifecycle Intelligence
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "23 7 * * 0"
+  workflow_call:
+    inputs:
+      mode:
+        description: report or apply
+        required: false
+        default: report
+        type: string
+      scope:
+        description: auto, full, or event_head
+        required: false
+        default: auto
+        type: string
+      stale_days:
+        description: Age threshold for divergent branch consolidation review
+        required: false
+        default: 30
+        type: number
+      minimum_delete_confidence:
+        description: Minimum confidence required for automatic deletion
+        required: false
+        default: 95
+        type: number
+      max_branches:
+        description: Fail closed if repository exceeds this branch count
+        required: false
+        default: 500
+        type: number
+      max_deletes:
+        description: Maximum branch deletions in one apply run
+        required: false
+        default: 100
+        type: number
+      protected_patterns:
+        description: Newline-delimited protected branch patterns; /* means prefix family
+        required: false
+        default: |-
+          main
+          master
+          develop
+          development
+          production
+          prod
+          staging
+          release/*
+          hotfix/*
+        type: string
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Execution mode
+        required: true
+        default: report
+        type: choice
+        options:
+          - report
+          - apply
+      stale_days:
+        description: Divergent branch review age
+        required: true
+        default: "30"
+        type: string
+      minimum_delete_confidence:
+        description: Automatic cleanup confidence floor
+        required: true
+        default: "95"
+        type: string
+      max_branches:
+        description: Maximum inventory size
+        required: true
+        default: "500"
+        type: string
+      max_deletes:
+        description: Maximum deletions in one apply run
+        required: true
+        default: "100"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: branch-lifecycle-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  lifecycle:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Inventory, classify, synthesize, and optionally clean
+        uses: actions/github-script@v8
+        env:
+          MODE: ${{ inputs.mode || (github.event_name == 'pull_request' && 'apply') || 'report' }}
+          SCOPE: ${{ inputs.scope || 'auto' }}
+          STALE_DAYS: ${{ inputs.stale_days || '30' }}
+          MIN_DELETE_CONFIDENCE: ${{ inputs.minimum_delete_confidence || '95' }}
+          MAX_BRANCHES: ${{ inputs.max_branches || '500' }}
+          MAX_DELETES: ${{ inputs.max_deletes || '100' }}
+          PROTECTED_PATTERNS: ${{ inputs.protected_patterns || 'main\nmaster\ndevelop\ndevelopment\nproduction\nprod\nstaging\nrelease/*\nhotfix/*' }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require("fs");
+            const crypto = require("crypto");
+
+            const mode = String(process.env.MODE || "report").toLowerCase();
+            if (!["report", "apply"].includes(mode)) {
+              core.setFailed(`Unsupported mode: ${mode}`);
+              return;
+            }
+
+            const requestedScope = String(process.env.SCOPE || "auto").toLowerCase();
+            const staleDays = Number(process.env.STALE_DAYS || 30);
+            const minimumDeleteConfidence = Number(process.env.MIN_DELETE_CONFIDENCE || 95);
+            const maxBranches = Number(process.env.MAX_BRANCHES || 500);
+            const maxDeletes = Number(process.env.MAX_DELETES || 100);
+            if (!Number.isFinite(staleDays) || staleDays < 0) throw new Error("invalid stale_days");
+            if (!Number.isFinite(minimumDeleteConfidence) || minimumDeleteConfidence < 0 || minimumDeleteConfidence > 100) {
+              throw new Error("invalid minimum_delete_confidence");
+            }
+            if (!Number.isInteger(maxBranches) || maxBranches < 1) throw new Error("invalid max_branches");
+            if (!Number.isInteger(maxDeletes) || maxDeletes < 0 || maxDeletes > 500) throw new Error("invalid max_deletes");
+
+            const protectedPatterns = String(process.env.PROTECTED_PATTERNS || "")
+              .split(/\r?\n/)
+              .map(x => x.trim())
+              .filter(Boolean);
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const fullName = `${owner}/${repo}`;
+            const repoMeta = await github.rest.repos.get({ owner, repo });
+            const defaultBranch = repoMeta.data.default_branch;
+
+            const localPolicy = {
+              source_path: ".github/branch-lifecycle-policy.json",
+              source_sha: null,
+              protected_branches: [],
+              protected_patterns: [],
+              preservation_reasons: {},
+            };
+            try {
+              const policyFile = await github.rest.repos.getContent({
+                owner,
+                repo,
+                path: localPolicy.source_path,
+                ref: defaultBranch,
+              });
+              if (!Array.isArray(policyFile.data) && policyFile.data.type === "file" && policyFile.data.content) {
+                const decoded = Buffer.from(policyFile.data.content, policyFile.data.encoding || "base64").toString("utf8");
+                const parsed = JSON.parse(decoded);
+                if (parsed.schema !== "glaciereq.branch-lifecycle-repository-policy.v1") {
+                  throw new Error(`unsupported_repository_policy_schema:${parsed.schema || "missing"}`);
+                }
+                if (Array.isArray(parsed.protected_branches)) {
+                  localPolicy.protected_branches = parsed.protected_branches.filter(value => typeof value === "string" && value.trim());
+                }
+                if (Array.isArray(parsed.protected_patterns)) {
+                  localPolicy.protected_patterns = parsed.protected_patterns.filter(value => typeof value === "string" && value.trim());
+                }
+                if (Array.isArray(parsed.preservations)) {
+                  for (const entry of parsed.preservations) {
+                    if (!entry || typeof entry.name !== "string" || !entry.name.trim()) continue;
+                    if (!localPolicy.protected_branches.includes(entry.name)) {
+                      localPolicy.protected_branches.push(entry.name);
+                    }
+                    localPolicy.preservation_reasons[entry.name] =
+                      typeof entry.reason === "string" ? entry.reason : "repository-local preservation";
+                  }
+                }
+                localPolicy.source_sha = policyFile.data.sha || null;
+              }
+            } catch (error) {
+              if (error.status !== 404) {
+                core.setFailed(`Repository branch lifecycle policy is invalid or unreadable: ${error.message || error}`);
+                return;
+              }
+            }
+            const eventPr = context.payload.pull_request || null;
+            const scope = requestedScope === "auto"
+              ? (context.eventName === "pull_request" && eventPr?.head?.repo?.full_name === fullName ? "event_head" : "full")
+              : requestedScope;
+            if (!["full", "event_head"].includes(scope)) throw new Error(`invalid scope: ${scope}`);
+            if (scope === "event_head" && (!eventPr || eventPr.head?.repo?.full_name !== fullName)) {
+              throw new Error("event_head scope requires a same-repository pull_request event");
+            }
+
+            function matchesPattern(name, pattern) {
+              if (pattern.endsWith("/*")) return name.startsWith(pattern.slice(0, -1));
+              return name === pattern;
+            }
+
+            function protectedByPattern(name) {
+              if (localPolicy.protected_branches.includes(name)) return true;
+              return [...protectedPatterns, ...localPolicy.protected_patterns].some(pattern => matchesPattern(name, pattern));
+            }
+
+            function familyKey(name) {
+              let value = name.toLowerCase().trim();
+              for (const prefix of ["apex/","codex/","feat/","feature/","fix/","chore/","repair/","promote/","promotion/","evolve/","rotor/"]) {
+                if (value.startsWith(prefix)) {
+                  value = value.slice(prefix.length);
+                  break;
+                }
+              }
+              value = value.replace(/(^|[-_/])20\d{6}(?=$|[-_/])/g, "-");
+              value = value.replace(/(^|[-_/])20\d{2}[-_.]?\d{2}[-_.]?\d{2}(?=$|[-_/])/g, "-");
+              value = value.replace(/(^|[-_/])(pr|issue|run|ticket)[-_]?\d+(?=$|[-_/])/g, "-");
+              value = value.replace(/[-_/]\d{5,}$/g, "");
+              value = value.replace(/[-_/]+/g, "-").replace(/^-+|-+$/g, "");
+              return value || name.toLowerCase();
+            }
+
+            function canonicalize(value) {
+              if (Array.isArray(value)) return value.map(canonicalize);
+              if (value && typeof value === "object") {
+                return Object.keys(value).sort().reduce((out, key) => {
+                  out[key] = canonicalize(value[key]);
+                  return out;
+                }, {});
+              }
+              return value;
+            }
+
+            function digest(value) {
+              return crypto.createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex");
+            }
+
+            async function paginate(method, params) {
+              return await github.paginate(method, { ...params, per_page: 100 });
+            }
+
+            const allBranches = await paginate(github.rest.repos.listBranches, { owner, repo });
+            if (allBranches.length > maxBranches) {
+              core.setFailed(`Fail closed: ${allBranches.length} branches exceeds max_branches=${maxBranches}`);
+              return;
+            }
+            const branches = scope === "event_head"
+              ? allBranches.filter(branch => branch.name === eventPr.head.ref)
+              : allBranches;
+
+            const pulls = scope === "event_head"
+              ? [eventPr]
+              : await paginate(github.rest.pulls.list, {
+                  owner,
+                  repo,
+                  state: "all",
+                  sort: "created",
+                  direction: "asc",
+                });
+
+            const pullsByBranch = new Map();
+            for (const pr of pulls) {
+              if (pr.head?.repo?.full_name !== fullName) continue;
+              const key = pr.head.ref;
+              if (!pullsByBranch.has(key)) pullsByBranch.set(key, []);
+              pullsByBranch.get(key).push(pr);
+            }
+
+            const inventory = new Array(branches.length);
+            let cursor = 0;
+            const workerCount = Math.min(4, Math.max(1, branches.length));
+
+            async function inspectWorker() {
+              while (true) {
+                const index = cursor++;
+                if (index >= branches.length) return;
+                const branch = branches[index];
+                const name = branch.name;
+                const evidenceErrors = [];
+                let headCommittedAt = null;
+                let aheadBy = null;
+                let behindBy = null;
+                let compareStatus = null;
+                let changedFiles = [];
+                const branchPulls = pullsByBranch.get(name) || [];
+                const hasOpenPr = branchPulls.some(pr => pr.state === "open");
+                const hasMergedCurrentHeadPr = branchPulls.some(
+                  pr => Boolean(pr.merged_at) && pr.head?.sha === branch.commit.sha
+                );
+
+                if (name === defaultBranch) {
+                  aheadBy = 0;
+                  behindBy = 0;
+                  compareStatus = "identical";
+                } else if (!hasOpenPr && !hasMergedCurrentHeadPr) {
+                  try {
+                    const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                      owner,
+                      repo,
+                      basehead: `${defaultBranch}...${name}`,
+                      per_page: 100,
+                    });
+                    aheadBy = comparison.data.ahead_by;
+                    behindBy = comparison.data.behind_by;
+                    compareStatus = comparison.data.status;
+                    changedFiles = (comparison.data.files || []).slice(0, 100).map(file => file.filename);
+
+                    if (Number.isInteger(aheadBy) && aheadBy > 0) {
+                      const comparedHead = (comparison.data.commits || []).find(commit => commit.sha === branch.commit.sha);
+                      headCommittedAt = comparedHead?.commit?.committer?.date || comparedHead?.commit?.author?.date || null;
+                      if (!headCommittedAt) {
+                        try {
+                          const commit = await github.rest.repos.getCommit({ owner, repo, ref: branch.commit.sha });
+                          headCommittedAt = commit.data.commit?.committer?.date || commit.data.commit?.author?.date || null;
+                        } catch (error) {
+                          evidenceErrors.push(`commit_lookup:${error.status || "error"}`);
+                        }
+                      }
+                    }
+                  } catch (error) {
+                    evidenceErrors.push(`compare:${error.status || "error"}`);
+                  }
+                }
+
+                inventory[index] = {
+                  name,
+                  sha: branch.commit.sha,
+                  protected: Boolean(branch.protected),
+                  head_committed_at: headCommittedAt,
+                  ahead_by: aheadBy,
+                  behind_by: behindBy,
+                  compare_status: compareStatus,
+                  open_prs: branchPulls.filter(pr => pr.state === "open").map(pr => ({ number: pr.number, url: pr.html_url })),
+                  merged_prs: branchPulls.filter(pr => Boolean(pr.merged_at)).map(pr => ({
+                    number: pr.number,
+                    merged_at: pr.merged_at,
+                    head_sha: pr.head?.sha || null,
+                    url: pr.html_url,
+                  })),
+                  closed_unmerged_prs: branchPulls.filter(pr => pr.state === "closed" && !pr.merged_at).map(pr => ({ number: pr.number, closed_at: pr.closed_at, url: pr.html_url })),
+                  changed_files: changedFiles,
+                  evidence_errors: evidenceErrors,
+                };
+              }
+            }
+            await Promise.all(Array.from({ length: workerCount }, () => inspectWorker()));
+
+            const generatedAt = new Date();
+            function ageDays(value) {
+              if (!value) return null;
+              const when = new Date(value);
+              if (Number.isNaN(when.valueOf())) return null;
+              return Math.max(0, Math.floor((generatedAt - when) / 86400000));
+            }
+
+            function classify(branch) {
+              const isProtected =
+                branch.name === defaultBranch ||
+                branch.protected ||
+                protectedByPattern(branch.name);
+              const age = ageDays(branch.head_committed_at);
+              const mergedCurrentHeadPrs = branch.merged_prs.filter(pr => pr.head_sha === branch.sha);
+              const evidence = {
+                protected: isProtected,
+                open_pr_count: branch.open_prs.length,
+                merged_pr_count: branch.merged_prs.length,
+                merged_current_head_pr_count: mergedCurrentHeadPrs.length,
+                closed_unmerged_pr_count: branch.closed_unmerged_prs.length,
+                ahead_by: branch.ahead_by,
+                behind_by: branch.behind_by,
+                compare_status: branch.compare_status,
+                age_days: age,
+                evidence_errors: branch.evidence_errors,
+              };
+              const result = (state, action, confidence, reason) => ({
+                branch: branch.name,
+                sha: branch.sha,
+                family: familyKey(branch.name),
+                state,
+                action,
+                cleanup_confidence: confidence,
+                reason,
+                evidence,
+              });
+
+              if (isProtected) return result("PROTECTED", "KEEP", 0, "reserved or protected branch");
+              if (branch.open_prs.length) return result("ACTIVE", "KEEP", 0, "open pull request proves active review");
+              if (branch.evidence_errors.length) return result("UNKNOWN_BLOCKED", "BLOCK", 0, "incomplete evidence fails closed");
+              if (mergedCurrentHeadPrs.length) return result("MERGED_REDUNDANT", "DELETE", 100, "current branch head exactly matches a merged pull-request head");
+              if (branch.ahead_by === 0) return result("REACHABLE_REDUNDANT", "DELETE", 98, "branch contributes zero commits ahead of default");
+              if (Number.isInteger(branch.ahead_by) && branch.ahead_by > 0) {
+                if (age !== null && age >= staleDays) {
+                  return result("STALE_REVIEW", "REVIEW_CONSOLIDATE", 0, "old branch still contains unique commits");
+                }
+                return result("DIVERGENT_PRESERVE", "KEEP", 0, "unique commits require preservation");
+              }
+              return result("UNKNOWN_BLOCKED", "BLOCK", 0, "comparison evidence is insufficient");
+            }
+
+            const decisions = inventory.map(classify).sort((a, b) => a.branch.localeCompare(b.branch));
+            for (const item of decisions) {
+              if (
+                item.action === "DELETE" &&
+                (!["MERGED_REDUNDANT", "REACHABLE_REDUNDANT"].includes(item.state) ||
+                  item.cleanup_confidence < minimumDeleteConfidence)
+              ) {
+                item.action = "BLOCK";
+                item.reason = "delete candidate does not satisfy automatic cleanup policy";
+              }
+            }
+
+            const byFamily = new Map();
+            for (const item of decisions) {
+              if (!byFamily.has(item.family)) byFamily.set(item.family, []);
+              byFamily.get(item.family).push(item);
+            }
+
+            function rank(item) {
+              const priority = {
+                ACTIVE: 6,
+                DIVERGENT_PRESERVE: 5,
+                STALE_REVIEW: 4,
+                PROTECTED: 3,
+                MERGED_REDUNDANT: 2,
+                REACHABLE_REDUNDANT: 1,
+                UNKNOWN_BLOCKED: 0,
+              }[item.state] || 0;
+              const original = inventory.find(branch => branch.name === item.branch);
+              const ahead = Number.isInteger(original?.ahead_by) ? original.ahead_by : -1;
+              const timestamp = original?.head_committed_at ? new Date(original.head_committed_at).valueOf() : 0;
+              return [priority, ahead, timestamp, item.branch];
+            }
+
+            function compareRank(a, b) {
+              const ar = rank(a);
+              const br = rank(b);
+              for (let i = 0; i < ar.length; i++) {
+                if (ar[i] > br[i]) return -1;
+                if (ar[i] < br[i]) return 1;
+              }
+              return 0;
+            }
+
+            const families = [];
+            for (const [family, members] of [...byFamily.entries()].sort()) {
+              if (members.length < 2) continue;
+              const ranked = [...members].sort(compareRank);
+              const divergent = ranked
+                .filter(item => ["ACTIVE", "DIVERGENT_PRESERVE", "STALE_REVIEW"].includes(item.state))
+                .map(item => item.branch);
+              families.push({
+                family,
+                lead: ranked[0].branch,
+                members: ranked.map(item => item.branch),
+                divergent_members: divergent,
+                consolidation_recommended: divergent.length > 1,
+                note: divergent.length > 1
+                  ? "Review unique siblings for synthesis into the family lead; naming is not equivalence proof."
+                  : "Family grouping is informational; redundant members may follow their individual cleanup action.",
+              });
+            }
+
+            const normalizedInventory = {
+              schema: "glaciereq.branch-inventory.v1",
+              repository: fullName,
+              default_branch: defaultBranch,
+              generated_at: generatedAt.toISOString(),
+              branches: inventory.sort((a, b) => a.name.localeCompare(b.name)),
+            };
+
+            const classificationCounts = {};
+            const actionCounts = {};
+            for (const item of decisions) {
+              classificationCounts[item.state] = (classificationCounts[item.state] || 0) + 1;
+              actionCounts[item.action] = (actionCounts[item.action] || 0) + 1;
+            }
+
+            const planCore = {
+              schema: "glaciereq.branch-lifecycle-plan.v1",
+              repository: fullName,
+              default_branch: defaultBranch,
+              generated_at: generatedAt.toISOString(),
+              mode,
+              scope,
+              native_delete_branch_on_merge: Boolean(repoMeta.data.delete_branch_on_merge),
+              stale_days: staleDays,
+              minimum_delete_confidence: minimumDeleteConfidence,
+              protected_patterns: protectedPatterns,
+              repository_policy: {
+                source_path: localPolicy.source_path,
+                source_sha: localPolicy.source_sha,
+                protected_branches: [...localPolicy.protected_branches].sort(),
+                protected_patterns: [...localPolicy.protected_patterns].sort(),
+                preservation_reasons: localPolicy.preservation_reasons,
+              },
+              inventory_sha256: digest(normalizedInventory),
+              classifications: classificationCounts,
+              actions: actionCounts,
+              branches: decisions,
+              families,
+            };
+            planCore.plan_sha256 = digest(planCore);
+
+            const deleted = [];
+            const executionBlocked = [];
+            const executionErrors = [];
+            const rolledBack = [];
+            const rollbackFailures = [];
+            const deleteCandidates = decisions
+              .filter(row => row.action === "DELETE")
+              .sort((a, b) => b.cleanup_confidence - a.cleanup_confidence || a.branch.localeCompare(b.branch));
+            const executeCandidates = deleteCandidates.slice(0, maxDeletes);
+            const deferredDeleteCandidates = deleteCandidates.slice(maxDeletes).map(item => ({
+              branch: item.branch,
+              state: item.state,
+              confidence: item.cleanup_confidence,
+              reason: "delete_budget_exhausted",
+            }));
+
+            async function refState(branch) {
+              try {
+                const response = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
+                return { exists: true, sha: response.data.object?.sha || null };
+              } catch (error) {
+                if (error.status === 404) return { exists: false, sha: null };
+                throw error;
+              }
+            }
+
+            async function restoreExactRef(item, failure) {
+              try {
+                const state = await refState(item.branch);
+                if (!state.exists) {
+                  await github.rest.git.createRef({
+                    owner,
+                    repo,
+                    ref: `refs/heads/${item.branch}`,
+                    sha: item.sha,
+                  });
+                } else if (state.sha !== item.sha) {
+                  throw new Error(`rollback_ref_occupied_by_different_sha:${state.sha}`);
+                }
+
+                const restored = await refState(item.branch);
+                if (!restored.exists || restored.sha !== item.sha) {
+                  throw new Error(`rollback_verification_failed:${restored.sha || "absent"}`);
+                }
+                rolledBack.push({
+                  branch: item.branch,
+                  sha: item.sha,
+                  state: item.state,
+                  confidence: item.cleanup_confidence,
+                  reason: String(failure?.message || failure).slice(0, 200),
+                });
+                return true;
+              } catch (rollbackError) {
+                rollbackFailures.push({
+                  branch: item.branch,
+                  sha: item.sha,
+                  status: rollbackError.status || null,
+                  message: String(rollbackError.message || rollbackError).slice(0, 240),
+                });
+                return false;
+              }
+            }
+
+            if (mode === "apply") {
+              for (const item of executeCandidates) {
+                let deleteAttempted = false;
+                try {
+                  let live;
+                  try {
+                    live = await github.rest.repos.getBranch({ owner, repo, branch: item.branch });
+                  } catch (error) {
+                    if (error.status === 404) {
+                      deleted.push({
+                        branch: item.branch,
+                        sha: item.sha,
+                        state: item.state,
+                        confidence: item.cleanup_confidence,
+                        already_absent: true,
+                      });
+                      continue;
+                    }
+                    throw error;
+                  }
+
+                  if (live.data.name === defaultBranch || live.data.protected || protectedByPattern(live.data.name)) {
+                    executionBlocked.push({ branch: item.branch, reason: "became_protected" });
+                    continue;
+                  }
+                  if (live.data.commit.sha !== item.sha) {
+                    executionBlocked.push({ branch: item.branch, reason: "head_changed_since_inventory" });
+                    continue;
+                  }
+
+                  const openNow = await github.rest.pulls.list({
+                    owner,
+                    repo,
+                    state: "open",
+                    head: `${owner}:${item.branch}`,
+                    per_page: 10,
+                  });
+                  if (openNow.data.length) {
+                    executionBlocked.push({ branch: item.branch, reason: "open_pr_present_at_execution" });
+                    continue;
+                  }
+
+                  if (item.state === "MERGED_REDUNDANT") {
+                    const mergedPr = (pullsByBranch.get(item.branch) || []).find(
+                      pr => Boolean(pr.merged_at) && pr.head?.sha === item.sha
+                    );
+                    if (!mergedPr) {
+                      executionBlocked.push({ branch: item.branch, reason: "merged_pr_evidence_missing_at_execution" });
+                      continue;
+                    }
+                    const livePr = await github.rest.pulls.get({ owner, repo, pull_number: mergedPr.number });
+                    if (!livePr.data.merged_at || livePr.data.head?.sha !== item.sha) {
+                      executionBlocked.push({ branch: item.branch, reason: "merged_pr_current_head_no_longer_verified" });
+                      continue;
+                    }
+                  } else if (item.state === "REACHABLE_REDUNDANT") {
+                    const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                      owner,
+                      repo,
+                      basehead: `${defaultBranch}...${item.branch}`,
+                      per_page: 1,
+                    });
+                    if (comparison.data.ahead_by !== 0) {
+                      executionBlocked.push({ branch: item.branch, reason: "branch_became_divergent" });
+                      continue;
+                    }
+                  } else {
+                    executionBlocked.push({ branch: item.branch, reason: "state_not_auto_deleteable" });
+                    continue;
+                  }
+
+                  await github.rest.git.deleteRef({ owner, repo, ref: `heads/${item.branch}` });
+                  deleteAttempted = true;
+
+                  let verifiedAbsent = false;
+                  for (let attempt = 0; attempt < 3; attempt += 1) {
+                    await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 350 : 900));
+                    const state = await refState(item.branch);
+                    if (!state.exists) {
+                      verifiedAbsent = true;
+                      break;
+                    }
+                  }
+                  if (!verifiedAbsent) {
+                    throw new Error("post_delete_verification_failed_ref_still_present");
+                  }
+
+                  deleted.push({
+                    branch: item.branch,
+                    sha: item.sha,
+                    state: item.state,
+                    confidence: item.cleanup_confidence,
+                    post_delete_verified: true,
+                  });
+                  await new Promise(resolve => setTimeout(resolve, 1100));
+                } catch (error) {
+                  if (deleteAttempted) {
+                    const restored = await restoreExactRef(item, error);
+                    executionErrors.push({
+                      branch: item.branch,
+                      status: error.status || null,
+                      message: String(error.message || error).slice(0, 200),
+                      rollback: restored ? "VERIFIED" : "FAILED",
+                    });
+                  } else {
+                    executionErrors.push({
+                      branch: item.branch,
+                      status: error.status || null,
+                      message: String(error.message || error).slice(0, 200),
+                    });
+                  }
+                }
+              }
+            }
+
+            const afterBranches = mode === "apply"
+              ? await paginate(github.rest.repos.listBranches, { owner, repo })
+              : allBranches;
+
+            const actualDeletedCount = deleted.filter(row => !row.already_absent).length;
+            const alreadyAbsentCount = deleted.filter(row => row.already_absent).length;
+
+            const receipt = {
+              schema: "glaciereq.branch-lifecycle-receipt.v1",
+              repository: fullName,
+              default_branch: defaultBranch,
+              generated_at: new Date().toISOString(),
+              mode,
+              scope,
+              native_delete_branch_on_merge: Boolean(repoMeta.data.delete_branch_on_merge),
+              before_branch_count: allBranches.length,
+              inspected_branch_count: branches.length,
+              after_branch_count: afterBranches.length,
+              delete_budget: maxDeletes,
+              delete_candidate_count: deleteCandidates.length,
+              deleted_count: actualDeletedCount,
+              already_absent_count: alreadyAbsentCount,
+              resolved_cleanup_count: deleted.length,
+              deferred_delete_candidates: deferredDeleteCandidates,
+              plan_sha256: planCore.plan_sha256,
+              inventory_sha256: planCore.inventory_sha256,
+              deleted,
+              preserved_divergent: decisions.filter(row => ["ACTIVE","DIVERGENT_PRESERVE","STALE_REVIEW"].includes(row.state)).map(row => ({
+                branch: row.branch,
+                state: row.state,
+                family: row.family,
+                ahead_by: row.evidence.ahead_by,
+              })),
+              blocked: decisions.filter(row => row.action === "BLOCK").map(row => ({ branch: row.branch, state: row.state, reason: row.reason })),
+              execution_blocked: executionBlocked,
+              execution_errors: executionErrors,
+              rolled_back: rolledBack,
+              rollback_failures: rollbackFailures,
+              classifications: classificationCounts,
+              actions: actionCounts,
+              consolidation_families: families.filter(family => family.consolidation_recommended),
+              policy: {
+                stale_days: staleDays,
+                minimum_delete_confidence: minimumDeleteConfidence,
+                protected_patterns: protectedPatterns,
+                repository_policy_source_sha: localPolicy.source_sha,
+                repository_protected_branches: [...localPolicy.protected_branches].sort(),
+                repository_protected_patterns: [...localPolicy.protected_patterns].sort(),
+                repository_preservation_reasons: localPolicy.preservation_reasons,
+              },
+            };
+            receipt.receipt_sha256 = digest(receipt);
+
+            fs.writeFileSync("branch-lifecycle-inventory.json", JSON.stringify(normalizedInventory, null, 2) + "\n");
+            fs.writeFileSync("branch-lifecycle-plan.json", JSON.stringify(planCore, null, 2) + "\n");
+            fs.writeFileSync("branch-lifecycle-receipt.json", JSON.stringify(receipt, null, 2) + "\n");
+
+            await core.summary
+              .addHeading("Branch Lifecycle Intelligence")
+              .addTable([
+                [{ data: "Metric", header: true }, { data: "Value", header: true }],
+                ["Mode", mode],
+                ["Scope", scope],
+                ["Native delete-on-merge", String(Boolean(repoMeta.data.delete_branch_on_merge))],
+                ["Repository policy", localPolicy.source_sha || "none"],
+                ["Repository protected refs", String(localPolicy.protected_branches.length)],
+                ["Before branches", String(allBranches.length)],
+                ["Inspected branches", String(branches.length)],
+                ["After branches", String(afterBranches.length)],
+                ["Delete candidates", String(deleteCandidates.length)],
+                ["Deleted by this run", String(actualDeletedCount)],
+                ["Already absent", String(alreadyAbsentCount)],
+                ["Resolved cleanup refs", String(deleted.length)],
+                ["Deferred by delete budget", String(deferredDeleteCandidates.length)],
+                ["Preserved divergent/active", String(receipt.preserved_divergent.length)],
+                ["Blocked", String(receipt.blocked.length + executionBlocked.length)],
+                ["Rolled back", String(rolledBack.length)],
+                ["Rollback failures", String(rollbackFailures.length)],
+                ["Consolidation families", String(receipt.consolidation_families.length)],
+                ["Plan SHA-256", planCore.plan_sha256],
+                ["Receipt SHA-256", receipt.receipt_sha256],
+              ])
+              .addHeading("Lifecycle classifications", 2)
+              .addCodeBlock(JSON.stringify(classificationCounts, null, 2), "json")
+              .write();
+
+            if (rollbackFailures.length) {
+              core.setFailed(`Cleanup rollback verification failed for ${rollbackFailures.length} branch(es); inspect receipt artifact immediately.`);
+            } else if (executionErrors.length) {
+              core.setFailed(`Cleanup completed with ${executionErrors.length} blocked/rolled-back execution error(s); inspect receipt artifact.`);
+            }
+
+      - name: Upload lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: branch-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            branch-lifecycle-inventory.json
+            branch-lifecycle-plan.json
+            branch-lifecycle-receipt.json
+          retention-days: 30
+          if-no-files-found: error
