@@ -132,7 +132,7 @@ jobs:
             if (!Number.isInteger(maxDeletes) || maxDeletes < 0 || maxDeletes > 500) throw new Error("invalid max_deletes");
 
             const protectedPatterns = String(process.env.PROTECTED_PATTERNS || "")
-              .split(/\r?\n/)
+              .split(/\r?\n|\\n/)
               .map(x => x.trim())
               .filter(Boolean);
 
