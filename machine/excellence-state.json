@@ -178,5 +178,12 @@
     "projection_truth_closed_at": "2026-08-10T1011Z"
   },
   "excellence_group": "C",
-  "scaffold": false
+  "scaffold": false,
+  "operator_contract": "OPERATOR_CONTRACT.md",
+  "gate_policy": {
+    "mode": "enrichment",
+    "stoppers_forbidden": true,
+    "promotion_ladder_forbidden": true,
+    "note": "Helix PROMOTED/demoted ladder retired; checks enrich only."
+  }
 }
