@@ -4,12 +4,12 @@
   "source_sha": "19b640c0ccdef9b1421041c5d3bb26a26cbfb9d05e1adbb0605800ac2a83e44e",
   "proof_id": "elite-modal-ephemeral-sandbox-receipt-1786356674",
   "environment": {
-    "python": "/Users/kcbflux/.local/bin/python3.11",
-    "PYTHONPATH": "/Users/kcbflux/GlacierEQ_Swarm/job-app/repos/modal-ephemeral-sandbox-receipt:/Users/kcbflux/GlacierEQ_Swarm/job-app/repos/modal-ephemeral-sandbox-receipt/src",
+    "python": "${HOME}/.local/bin/python3.11",
+    "PYTHONPATH": "${HOME}/GlacierEQ_Swarm/job-app/repos/modal-ephemeral-sandbox-receipt:${HOME}/GlacierEQ_Swarm/job-app/repos/modal-ephemeral-sandbox-receipt/src",
     "entry": "unittest"
   },
   "tests": [
-    "/Users/kcbflux/.local/bin/python3.11 -m unittest discover -s tests -v (x2)"
+    "${HOME}/.local/bin/python3.11 -m unittest discover -s tests -v (x2)"
   ],
   "adversarial_tests": [
     "tests/test_adversarial.py"
