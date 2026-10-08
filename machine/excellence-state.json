@@ -51,20 +51,12 @@
     "PROOF_RECEIPT_BOUND": {
       "status": "PASS",
       "at": "2026-08-10T10:11Z",
-      "evidence": "proof_receipt digest=2092d8201979a912\u2026 entry=unittest"
-    },
-    "AUTHORITY_BOUND": {
-      "status": "PASS",
-      "at": "2026-08-10T10:11Z",
-      "evidence": "promotion_authority.json local HMAC grant"
+      "evidence": "proof_receipt digest=2092d8201979a912… entry=unittest"
     },
     "PROJECTION_TRUTH_CLOSED": {
       "status": "PASS",
       "at": "2026-08-10T10:11Z",
-      "evidence": "operable=scripts/operate.py dual-run PASS; primary ok; proof=proof_receipt digest=2092d8201979a912\u2026 entry=unittest; authority=promotion_authority.json local HMAC grant; claim_ceiling=leaf-native; projection_role=monolith_projection_only"
-    },
-    "CANONICAL_POSITION_RESOLVED": {
-      "status": "PENDING"
+      "evidence": "operable=scripts/operate.py dual-run PASS; primary ok; proof=proof_receipt digest=2092d8201979a912… entry=unittest; proof_binding=legacy proof-binding receipt (non-authoritative); claim_ceiling=leaf-native; projection_role=monolith_projection_only"
     },
     "EVOLUTION_CURSOR_DEFINED": {
       "status": "PASS",
@@ -151,7 +143,7 @@
       "to": "PROOF_REPRODUCED",
       "gate": "PROOF_RECEIPT_BOUND",
       "result": "PASS",
-      "note": "proof_receipt digest=2092d8201979a912\u2026 entry=unittest"
+      "note": "proof_receipt digest=2092d8201979a912… entry=unittest"
     },
     {
       "at": "2026-08-10T10:11Z",
@@ -159,15 +151,16 @@
       "to": "PROMOTED",
       "gate": "AUTHORITY_BOUND",
       "result": "PASS",
-      "note": "promotion_authority.json local HMAC grant"
+      "note": "promotion_authority.json local HMAC grant",
+      "historical_semantics": "technical evidence only; no project authority"
     }
   ],
   "contract_ref": "machine/target-contract.json",
   "scores_ref": "machine/excellence-scores.json",
-  "evolution_cursor": "next:canonical_position_only_if_estate_role_resolved",
+  "evolution_cursor": "next:source_binding_challenger_comparison_and_verified_improvement",
   "wave": {
     "id": "WAVE-C-2026-08-10",
-    "label": "Wave C \u2014 Innovation scaffold excellence group",
+    "label": "Wave C — Innovation scaffold excellence group",
     "group": "C",
     "phase": "PROMOTED",
     "enrolled_at": "2026-08-10T1002Z",
@@ -175,7 +168,8 @@
     "policy": "glaciereq.repo-excellence.promotion-policy.v1",
     "proof_ok": true,
     "operable_ok": true,
-    "projection_truth_closed_at": "2026-08-10T1011Z"
+    "projection_truth_closed_at": "2026-08-10T1011Z",
+    "promotion_semantics": "evidence_readiness_not_project_authority"
   },
   "excellence_group": "C",
   "scaffold": false,
@@ -185,5 +179,24 @@
     "stoppers_forbidden": true,
     "promotion_ladder_forbidden": true,
     "note": "Helix PROMOTED/demoted ladder retired; checks enrich only."
-  }
+  },
+  "historical_legacy_gates": {
+    "AUTHORITY_BOUND": {
+      "status": "PASS",
+      "at": "2026-08-10T10:11Z",
+      "evidence": "promotion_authority.json local HMAC grant"
+    },
+    "CANONICAL_POSITION_RESOLVED": {
+      "status": "PENDING"
+    }
+  },
+  "historical_legacy_gate_semantics": "Preserved technical evidence only; historical authority/canonical-position labels create no project direction, lifecycle permission, release authority, cross-repository authority, or asset disposition power.",
+  "project_direction_authority": "OPERATOR",
+  "machine_state_creates_project_authority": false,
+  "compatibility_semantics": {
+    "PROMOTED": "evidence_bounded_outward_claim_readiness_only",
+    "CANONICAL": "current-selection compatibility label only; never project authority"
+  },
+  "retirement_authorized_by_machine_state": false,
+  "remote_ref_deletion_authorized_by_machine_state": false
 }
