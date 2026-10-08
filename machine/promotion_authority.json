@@ -1,11 +1,14 @@
 {
-  "schema": "glaciereq.promotion-authority-grant.v1",
+  "schema": "glaciereq.promotion-proof-compatibility.v2",
+  "status": "EVIDENCE_BOUND_NON_AUTHORITATIVE",
   "repository": "GlacierEQ/modal-ephemeral-sandbox-receipt",
   "source_sha": "19b640c0ccdef9b1421041c5d3bb26a26cbfb9d05e1adbb0605800ac2a83e44e",
   "proof_receipt_digest": "2092d8201979a91265541c0f1290cc37572ac3ffa7794e5646f72b81036fbacc",
-  "not_after": 1788948674.5705411,
-  "mac": "61a3d857458545074df5ec98a9ff36e01add40ef7ab4f82a121a16e70e4f855d",
-  "issuer": "local_operator_promotion_authority",
-  "verified": true,
-  "secret_ref": "src/promotion_authority.py::LOCAL_OPERATOR_SECRET"
+  "project_direction_authority": false,
+  "repository_lifecycle_authority": false,
+  "cross_repository_authority": false,
+  "merge_or_release_authority": false,
+  "technical_meaning": "Exact-source proof-binding compatibility metadata only. This record cannot authorize project direction, promotion, merge, release, retirement, repository disposition, or cross-repository action.",
+  "legacy_source_blob_sha": "4349a67acda1dff9b53db4e91b05e1337169dfd3",
+  "legacy_grant_preserved_in_git_history": true
 }
