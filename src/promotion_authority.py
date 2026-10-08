@@ -1,115 +1,105 @@
-"""Promotion authority — short-lived HMAC grant for PROMOTED gate.
+"""Legacy promotion-proof compatibility API with no project authority.
 
-Independent reference. Not Helix; local operator authority for this leaf.
-
-Auditors re-verify grants with LOCAL_OPERATOR_SECRET and
-scripts/verify_promotion_grant.py against machine/promotion_authority.json
-bound to machine/proof_receipt.json digest + source_sha.
+Historical callers may still import PromotionAuthority and PromotionGrant.
+Those names are retained only to avoid breaking leaf integrations. The current
+objects bind exact-source proof metadata; they cannot authorize promotion, merge,
+release, retirement, repository disposition, or cross-repository action.
 """
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
-import time
 from dataclasses import dataclass
-
-
-# Reference local operator secret (NOT production). Documented for re-verification.
-LOCAL_OPERATOR_SECRET = b"glaciereq-local-operator-promotion-authority-v1"
-
-
-def _digest(obj: object) -> str:
-    return hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
-class PromotionGrant:
+class ProofBinding:
     repository: str
     source_sha: str
     proof_receipt_digest: str
-    not_after: float
-    mac: str
 
-    def fingerprint(self) -> str:
-        return _digest({
-            "repository": self.repository,
-            "source_sha": self.source_sha,
-            "proof_receipt_digest": self.proof_receipt_digest,
-            "not_after": self.not_after,
-            "mac": self.mac,
-        })
+    @property
+    def project_authority(self) -> bool:
+        return False
 
     @classmethod
-    def from_dict(cls, d: dict) -> "PromotionGrant":
+    def from_dict(cls, payload: dict[str, Any]) -> "ProofBinding":
         return cls(
-            repository=d["repository"],
-            source_sha=d["source_sha"],
-            proof_receipt_digest=d["proof_receipt_digest"],
-            not_after=float(d["not_after"]),
-            mac=d["mac"],
+            repository=str(payload["repository"]),
+            source_sha=str(payload["source_sha"]),
+            proof_receipt_digest=str(payload["proof_receipt_digest"]),
         )
 
 
-class PromotionAuthority:
-    def __init__(self, secret: bytes, ttl_s: float = 3600.0):
-        if not secret:
-            raise ValueError("secret required")
-        if ttl_s <= 0:
-            raise ValueError("ttl")
-        self._secret = secret
-        self._ttl = ttl_s
+class ProofBindingVerifier:
+    """Verify structural proof bindings only; never project permission."""
 
-    def issue(self, repository: str, source_sha: str, proof_receipt_digest: str, now: float | None = None) -> PromotionGrant:
-        t = time.time() if now is None else now
-        na = t + self._ttl
-        body = f"{repository}|{source_sha}|{proof_receipt_digest}|{na}"
-        mac = hmac.new(self._secret, body.encode(), hashlib.sha256).hexdigest()
-        return PromotionGrant(repository, source_sha, proof_receipt_digest, na, mac)
+    def __init__(self, secret: bytes | None = None, ttl_s: float | None = None):
+        self.legacy_parameter_supplied = secret is not None or ttl_s is not None
 
-    def verify(self, grant: PromotionGrant, now: float | None = None) -> tuple[bool, str | None]:
-        t = time.time() if now is None else now
-        if t > grant.not_after:
-            return False, "GRANT_EXPIRED"
-        body = f"{grant.repository}|{grant.source_sha}|{grant.proof_receipt_digest}|{grant.not_after}"
-        mac = hmac.new(self._secret, body.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(mac, grant.mac):
-            return False, "BAD_MAC"
+    def issue(
+        self,
+        repository: str,
+        source_sha: str,
+        proof_receipt_digest: str,
+        now: float | None = None,
+    ) -> ProofBinding:
+        del now
+        return ProofBinding(repository, source_sha, proof_receipt_digest)
+
+    def verify(
+        self,
+        binding: ProofBinding,
+        now: float | None = None,
+    ) -> tuple[bool, str | None]:
+        del now
+        if not binding.repository or not binding.source_sha or not binding.proof_receipt_digest:
+            return False, "BINDING_INCOMPLETE"
         return True, None
 
 
+PromotionGrant = ProofBinding
+PromotionAuthority = ProofBindingVerifier
+
+
 def verify_bound_grant(
-    grant_dict: dict,
-    proof_receipt_path: str | bytes | "Path",
+    grant_dict: dict[str, Any],
+    proof_receipt_path: str | bytes | Path,
     *,
-    secret: bytes = LOCAL_OPERATOR_SECRET,
+    secret: bytes | None = None,
     now: float | None = None,
 ) -> tuple[bool, str | None]:
-    """Verify a machine/promotion_authority.json grant against a proof receipt file.
+    """Verify exact-source proof binding on a non-authoritative compatibility record."""
 
-    Checks:
-      1) proof_receipt_digest == sha256(proof file bytes)
-      2) grant.source_sha == proof.source_sha
-      3) HMAC verify with operator secret
-    Fail-closed on any mismatch.
-    """
-    from pathlib import Path as _P
-    path = _P(proof_receipt_path)
+    del secret, now
+    path = Path(proof_receipt_path)
     if not path.is_file():
         return False, "PROOF_RECEIPT_MISSING"
-    proof_bytes = path.read_bytes()
-    file_digest = hashlib.sha256(proof_bytes).hexdigest()
     try:
-        proof = json.loads(proof_bytes.decode())
+        proof_bytes = path.read_bytes()
+        proof = json.loads(proof_bytes.decode("utf-8"))
     except Exception:
-        return False, "PROOF_RECEIPT_INVALID_JSON"
-    if grant_dict.get("proof_receipt_digest") != file_digest:
+        return False, "PROOF_RECEIPT_INVALID"
+
+    if grant_dict.get("status") != "EVIDENCE_BOUND_NON_AUTHORITATIVE":
+        return False, "LEGACY_AUTHORITY_RECORD_NOT_MIGRATED"
+    for key in (
+        "project_direction_authority",
+        "repository_lifecycle_authority",
+        "cross_repository_authority",
+    ):
+        if grant_dict.get(key) is not False:
+            return False, "AUTHORITY_FLAG_MUST_BE_FALSE"
+
+    digest = hashlib.sha256(proof_bytes).hexdigest()
+    if grant_dict.get("proof_receipt_digest") != digest:
         return False, "PROOF_DIGEST_MISMATCH"
     if grant_dict.get("source_sha") != proof.get("source_sha"):
         return False, "SOURCE_SHA_MISMATCH"
     try:
-        grant = PromotionGrant.from_dict(grant_dict)
+        binding = ProofBinding.from_dict(grant_dict)
     except Exception:
-        return False, "GRANT_MALFORMED"
-    auth = PromotionAuthority(secret, ttl_s=max(1.0, float(grant.not_after) - (now or time.time()) + 1.0))
-    return auth.verify(grant, now=now)
+        return False, "BINDING_MALFORMED"
+    return ProofBindingVerifier().verify(binding)
