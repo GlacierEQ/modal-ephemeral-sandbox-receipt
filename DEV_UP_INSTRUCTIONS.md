@@ -5,7 +5,7 @@
 - **Group:** Wave C
 - **Wave id:** `WAVE-C-2026-08-10`
 - **Enrolled:** 2026-08-10T1002Z
-- **Phase:** SCAFFOLD_ENROLLED → implement mechanism → proof → promote (XOR gap)
+- **Phase:** SCAFFOLD_ENROLLED → implement mechanism → proof → evidence-ready (or gap)
 - **DoD:** Bodybuilder gates in `excellence/framework/PIP_TO_BODYBUILDER_PIPELINE.md`
 
 **Repository:** `GlacierEQ/modal-ephemeral-sandbox-receipt`  
@@ -74,7 +74,7 @@ File: `machine/target-contract.json`
 File: `machine/excellence-state.json`
 
 - Leave `DISCOVERED` until real proof exists.
-- On elevation: follow Helix promotion policy (AUTHORITY_BOUND + PROJECTION_TRUTH_CLOSED for PROMOTED).
+- On elevation: require exact-source implementation proof + PROJECTION_TRUTH_CLOSED. PROMOTED is evidence/readiness metadata only and never project authority.
 
 ### 6. README honesty
 - Keep non-affiliation block.
